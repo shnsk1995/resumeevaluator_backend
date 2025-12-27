@@ -1,5 +1,10 @@
+from functools import partial, partialmethod
 import os
 from typing import Annotated
+from unittest import result
+from fastapi.openapi.models import APIKey
+from langgraph import graph
+from langgraph.checkpoint import memory
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -15,11 +20,11 @@ import uuid
 import asyncio
 
 
+
 load_dotenv(override=True)
 
 class State(TypedDict):
-    messages : Annotated[List[Any],add_messages];
-    target : List[str];
+    messages : Annotated[List[str],add_messages];
 
 
 class EvaluationOutput(BaseModel):
@@ -33,16 +38,15 @@ class EvaluationOutput(BaseModel):
 
 
 class GraphRequest(BaseModel):
-    resume : str;
-    target_roles : str;
-    session_id : Optional[str] = None
+    history : List[Dict[str,str]];
+    session_id : str
 
 
 def EvaluatorAgent(state : State) -> Dict[str, Any]:
-    tools= "";
+    #tools= "";
     llm = ChatOpenAI(model="gpt-4o-mini");
-    llm_tools= llm.bind_tools(tools);
-    llm_with_so = llm_tools.with_structured_output(EvaluationOutput);
+    #llm_tools= llm.bind_tools(tools);
+    #llm_with_so = llm_tools.with_structured_output(EvaluationOutput); use later
 
     system_message = f"""
 
@@ -51,7 +55,50 @@ def EvaluatorAgent(state : State) -> Dict[str, Any]:
     You shall use the appropriate tools to search the job descriptions of all the target roles in all the job board websites such as linkedin , indeed, etc.
     Collate all the requirements for the target roles and compare them with the resume to evaluate the resume for different metrics as described in {EvaluationOutput}.
     You will only respond in the requested structured output format and avoid any hallucinations.
+    You will not use quotes for your replies and will highlight important information.
 
 """
 
-    response = llm_with_so.invoke(state["messages"])
+    response = llm.invoke(state["messages"])
+
+    return {"messages" : response}
+
+
+def build_graph():
+
+    graph_builder = StateGraph(State)
+    graph_builder.add_node("EvaluatorAgent" , EvaluatorAgent)
+    graph_builder.add_edge(START,"EvaluatorAgent")
+    graph_builder.add_edge("EvaluatorAgent",END)
+    graph = graph_builder.compile(checkpointer=MemorySaver())
+    png = graph.get_graph().draw_mermaid_png()
+    with open("graph.png", "wb") as f:
+        f.write(png)
+    
+    return graph
+
+
+async def run_superstep(message, history, graph, session_id):
+    config = {"configurable" : {"thread_id" : session_id}}
+
+    state = {
+
+        "messages" : message,
+        
+    }
+
+    result = await graph.ainvoke(state, config = config)
+
+    reply = {"role" : "assistant", "content" : result["messages"][-1].content}
+
+    partial_reply = ""
+
+    for word in reply["content"].split(" "):
+        partial_reply += f"{word} "
+        await asyncio.sleep(0.05)
+        yield partial_reply
+    
+    yield partial_reply
+
+
+
