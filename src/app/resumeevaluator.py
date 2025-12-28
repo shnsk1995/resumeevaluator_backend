@@ -1,5 +1,6 @@
 from functools import partial, partialmethod
 import os
+import textwrap
 from typing import Annotated
 from unittest import result
 from fastapi.openapi.models import APIKey
@@ -35,6 +36,7 @@ class EvaluationOutput(BaseModel):
     length : str = Field(description="How appropriate is the length of the resume for the total experience of the candidate. Suggest a change in length if required")
     hiring_manager_affinity : str = Field(description="How likely it is to get noticed or selected by a hiring manager for the target roles with the current resume")
     unnecesary : str = Field(description="Is there any absolutely unnecessary content in the resume for the target roles. If yes, suggest to remove it")
+    summary : str = Field(description="Resume analysis summary in simple human like language")
 
 
 class GraphRequest(BaseModel):
@@ -42,11 +44,43 @@ class GraphRequest(BaseModel):
     session_id : str
 
 
+def ensure_system_message(messages, system_message):
+    for m in messages:
+        if isinstance(m,SystemMessage):
+            m.content = system_message
+            return messages
+        
+    return [SystemMessage(content=system_message)] + list(messages)
+
+
+def evaluation_to_messages(evaluation_output : EvaluationOutput) -> str:
+    msg =  f"""
+        📌 Relevance
+        {evaluation_output.relevance}
+        ⭐ Relevance Rating (out of 10)
+        {evaluation_output.relevance_rating}/10
+        🧩 Skill Gaps
+        {evaluation_output.skill_gap}
+        🤖 ATS Friendliness
+        {evaluation_output.ats_friendliness}
+        📄 Resume Length
+        {evaluation_output.length}
+        👔 Hiring Manager Affinity
+        {evaluation_output.hiring_manager_affinity}
+        🗑️ Unnecessary Content
+        {evaluation_output.unnecesary}
+        🗓️ Summary
+        {evaluation_output.summary}
+    """.strip()
+
+    return textwrap.dedent(msg).strip()
+
+
 def EvaluatorAgent(state : State) -> Dict[str, Any]:
     #tools= "";
     llm = ChatOpenAI(model="gpt-4o-mini");
     #llm_tools= llm.bind_tools(tools);
-    #llm_with_so = llm_tools.with_structured_output(EvaluationOutput); use later
+    llm_with_so = llm.with_structured_output(EvaluationOutput);
 
     system_message = f"""
 
@@ -59,9 +93,13 @@ def EvaluatorAgent(state : State) -> Dict[str, Any]:
 
 """
 
-    response = llm.invoke(state["messages"])
+    messages = ensure_system_message(state["messages"], system_message)
 
-    return {"messages" : response}
+    response = llm_with_so.invoke(messages)
+
+    assistant_message = evaluation_to_messages(response)
+
+    return {"messages" : [AIMessage(content=assistant_message)]}
 
 
 def build_graph():
@@ -88,6 +126,8 @@ async def run_superstep(message, history, graph, session_id):
     }
 
     result = await graph.ainvoke(state, config = config)
+
+    
 
     reply = {"role" : "assistant", "content" : result["messages"][-1].content}
 
