@@ -4,17 +4,29 @@ from dotenv import load_dotenv
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.runnables import history
+from langchain_openai import ChatOpenAI
 from langgraph import graph
 from app.resumeevaluator import GraphRequest, build_graph, run_superstep
 from contextlib import asynccontextmanager
 from langsmith import traceable
+from app.tools import other_tools, playwright_tools
 
 load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.graph = build_graph()
-    yield
+
+    tools, browser, playwright = await playwright_tools()
+    tools += await other_tools()
+    llm = ChatOpenAI(model="gpt-4o-mini")
+
+    app.state.graph = await build_graph(tools,llm)
+
+    try:
+        yield
+    finally:
+        await browser.close()
+        await playwright.stop()
 
 app = FastAPI(lifespan=lifespan);
 

@@ -1,25 +1,16 @@
-from functools import partial, partialmethod
-import os
+
 import textwrap
 from typing import Annotated
-from unittest import result
-from fastapi.openapi.models import APIKey
-from langgraph import graph
-from langgraph.checkpoint import memory
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from dotenv import load_dotenv
 from langgraph.prebuilt import ToolNode
-from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from typing import List, Any, Dict, Optional
+from langchain_core.messages import AIMessage, SystemMessage
+from typing import List, Any, Dict
 from pydantic import BaseModel, Field
-import uuid
 import asyncio
-
 
 
 load_dotenv(override=True)
@@ -29,6 +20,7 @@ class State(TypedDict):
 
 
 class EvaluationOutput(BaseModel):
+    search_places : List[str] = Field(description="Websites list from which the target roles were searched");
     relevance : str = Field(description="Relevance of the resume when compared with the current job requirements of the target roles");
     relevance_rating : int = Field(description="Rating out of 10 for the relevance of the resume with the current job requirements of the target roles");
     skill_gap : str = Field(description="SKills that are not present in the resume but are required in most of the jobs in the target roles");
@@ -55,6 +47,8 @@ def ensure_system_message(messages, system_message):
 
 def evaluation_to_messages(evaluation_output : EvaluationOutput) -> str:
     msg =  f"""
+        🗓️ Search sites
+        {evaluation_output.search_places}
         📌 Relevance
         {evaluation_output.relevance}
         ⭐ Relevance Rating (out of 10)
@@ -76,38 +70,68 @@ def evaluation_to_messages(evaluation_output : EvaluationOutput) -> str:
     return textwrap.dedent(msg).strip()
 
 
-def EvaluatorAgent(state : State) -> Dict[str, Any]:
-    #tools= "";
-    llm = ChatOpenAI(model="gpt-4o-mini");
-    #llm_tools= llm.bind_tools(tools);
-    llm_with_so = llm.with_structured_output(EvaluationOutput);
-
-    system_message = f"""
-
-    You are a resume evaluator.
-    You are given a resume and a list of target roles. 
-    You shall use the appropriate tools to search the job descriptions of all the target roles in all the job board websites such as linkedin , indeed, etc.
-    Collate all the requirements for the target roles and compare them with the resume to evaluate the resume for different metrics as described in {EvaluationOutput}.
-    You will only respond in the requested structured output format and avoid any hallucinations.
-    You will not use quotes for your replies and will highlight important information.
-
-"""
-
-    messages = ensure_system_message(state["messages"], system_message)
-
-    response = llm_with_so.invoke(messages)
-
-    assistant_message = evaluation_to_messages(response)
-
-    return {"messages" : [AIMessage(content=assistant_message)]}
 
 
-def build_graph():
+def router_to_tools(state: State):
+    lst_msg = state["messages"][-1]
+
+    if hasattr(lst_msg, "tool_calls") and lst_msg.tool_calls:
+        return "tools"
+    else:
+        return "EvaluatorAgent"
+
+
+
+async def build_graph(tools,llm):
+
+    async def InformationAgent(state : State) -> Dict[str, Any]:
+        llm_tools= llm.bind_tools(tools);
+
+        system_message = f"""
+
+        You are an information gatherer for resume evaluator.
+        You are given a resume and a list of target roles. 
+        You shall use the provided tools to search the job descriptions of all the target roles in all the job board websites such as linkedin , indeed, etc.
+        Collate all the requirements for the target roles and respond with that information.
+
+        """
+
+        messages = ensure_system_message(state["messages"], system_message)
+
+        response = await llm_tools.ainvoke(messages)
+
+        return {"messages" : [response]}
+
+
+    async def EvaluatorAgent(state : State) -> Dict[str, Any]:
+        llm_with_so = llm.with_structured_output(EvaluationOutput)
+
+        system_message = f"""
+
+        You are a resume evaluator.
+        You are given a resume and a list of target roles and the requirements for such target roles from across multiple job board websites. 
+        You shall use the provided information to compare the resume with the information from job board sites and evaluate the resume.
+
+        """
+
+        messages = ensure_system_message(state["messages"],system_message)
+
+        response = await llm_with_so.ainvoke(messages)
+
+        response = evaluation_to_messages(response)
+
+        return {"messages" : [AIMessage(content=response)]}
 
     graph_builder = StateGraph(State)
-    graph_builder.add_node("EvaluatorAgent" , EvaluatorAgent)
-    graph_builder.add_edge(START,"EvaluatorAgent")
+    graph_builder.add_node("InformationAgent" , InformationAgent)
+    graph_builder.add_node("EvaluatorAgent",EvaluatorAgent)
+    graph_builder.add_node("tools", ToolNode(tools=tools))
+    graph_builder.add_edge(START,"InformationAgent")
     graph_builder.add_edge("EvaluatorAgent",END)
+    graph_builder.add_conditional_edges(
+        "InformationAgent",router_to_tools,{"tools" : "tools", "EvaluatorAgent" : "EvaluatorAgent"}
+    )
+    graph_builder.add_edge("tools","InformationAgent")
     graph = graph_builder.compile(checkpointer=MemorySaver())
     png = graph.get_graph().draw_mermaid_png()
     with open("graph.png", "wb") as f:
