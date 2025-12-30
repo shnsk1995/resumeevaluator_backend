@@ -133,9 +133,9 @@ async def build_graph(tools,llm):
     )
     graph_builder.add_edge("tools","InformationAgent")
     graph = graph_builder.compile(checkpointer=MemorySaver())
-    png = graph.get_graph().draw_mermaid_png()
-    with open("graph.png", "wb") as f:
-        f.write(png)
+    #png = graph.get_graph().draw_mermaid_png()
+    #with open("graph.png", "wb") as f:
+        #f.write(png)
     
     return graph
 

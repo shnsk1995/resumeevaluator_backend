@@ -1,7 +1,5 @@
 from dotenv import load_dotenv
 from langchain_core.tools import Tool
-from playwright.async_api import async_playwright
-from langchain_community.agent_toolkits import PlayWrightBrowserToolkit
 from langchain_community.utilities import GoogleJobsAPIWrapper, GoogleSerperAPIWrapper
 
 load_dotenv(override=True)
@@ -10,11 +8,11 @@ serpersearch = GoogleSerperAPIWrapper()
 jobsearch = GoogleJobsAPIWrapper()
 
 
-async def playwright_tools():
-    playwright = await async_playwright().start()
-    browser = await playwright.chromium.launch(headless=True)
-    toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=browser)
-    return toolkit.get_tools(), browser, playwright
+#async def playwright_tools():
+#    playwright = await async_playwright().start()
+#    browser = await playwright.chromium.launch(headless=True)
+#    toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=browser)
+#   return toolkit.get_tools(), browser, playwright
 
 async def other_tools():
 
