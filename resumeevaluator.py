@@ -28,7 +28,7 @@ class EvaluationOutput(BaseModel):
     length : str = Field(description="How appropriate is the length of the resume for the total experience of the candidate. Suggest a change in length if required")
     hiring_manager_affinity : str = Field(description="How likely it is to get noticed or selected by a hiring manager for the target roles with the current resume")
     unnecesary : str = Field(description="Is there any absolutely unnecessary content in the resume for the target roles. If yes, suggest to remove it")
-    summary : str = Field(description="Resume analysis summary in simple human like language")
+    summary : str = Field(description="Resume analysis summary in simple human language")
 
 
 class GraphRequest(BaseModel):
