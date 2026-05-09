@@ -5,3 +5,4 @@ lambda-package/
 lambda-deployment.zip
 .DS_Store
 __pycache__/
+.vscode
